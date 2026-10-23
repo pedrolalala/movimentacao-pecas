@@ -43,6 +43,8 @@ export interface PecaBusca {
   marca: string | null
   estoque_geral: number
   showroom: number
+  /** Garantia + Casa Cor + Defeito + Amostra / Emprestado */
+  outros: number
 }
 
 export interface VendaDaPeca {
@@ -99,11 +101,16 @@ export interface FiltrosHistorico {
 
 const n = (v: unknown) => Number(v) || 0
 
+/** Com termo: até 40 peças que casam. Termo vazio: todas as peças com estoque positivo em algum setor (migration 237). */
 export async function buscarPecas(termo: string): Promise<PecaBusca[]> {
-  if (!termo.trim()) return []
-  const { data, error } = await (supabase as any).rpc('movimentacao_buscar_pecas', { p_termo: termo })
+  const { data, error } = await (supabase as any).rpc('movimentacao_buscar_pecas', { p_termo: termo.trim() })
   if (error) throw error
-  return (data ?? []).map((r: any) => ({ ...r, estoque_geral: n(r.estoque_geral), showroom: n(r.showroom) }))
+  return (data ?? []).map((r: any) => ({
+    ...r,
+    estoque_geral: n(r.estoque_geral),
+    showroom: n(r.showroom),
+    outros: n(r.outros),
+  }))
 }
 
 export async function getSetoresDaPeca(produtoId: string): Promise<SetoresDaPeca> {

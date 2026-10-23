@@ -40,6 +40,7 @@ import {
 // Sem aprovação: o banco confere saldo, peça livre e motivo, e grava o movimento com o login de quem fez.
 
 const lerQtd = (v: string) => parseFloat(v.replace(',', '.')) || 0
+const LOTE = 100
 const dataHora = (v: string) =>
   new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
@@ -47,6 +48,8 @@ export default function MovimentarPage() {
   const [busca, setBusca] = useState('')
   const [buscando, setBuscando] = useState(false)
   const [resultados, setResultados] = useState<PecaBusca[]>([])
+  // Busca vazia = todas as peças com estoque positivo (~2 mil): mostra aos poucos conforme rola
+  const [visiveis, setVisiveis] = useState(LOTE)
   const [pecaId, setPecaId] = useState<string | null>(null)
   const [dados, setDados] = useState<SetoresDaPeca | null>(null)
   const [ultimos, setUltimos] = useState<Movimento[]>([])
@@ -63,20 +66,20 @@ export default function MovimentarPage() {
   const [motivoVenda, setMotivoVenda] = useState('')
 
   useEffect(() => {
-    if (!busca.trim()) {
-      setResultados([])
-      return
-    }
-    const t = setTimeout(async () => {
-      setBuscando(true)
-      try {
-        setResultados(await buscarPecas(busca))
-      } catch (err) {
-        toast.error('Erro na busca', { description: msgErro(err) })
-      } finally {
-        setBuscando(false)
-      }
-    }, 350)
+    const t = setTimeout(
+      async () => {
+        setBuscando(true)
+        try {
+          setResultados(await buscarPecas(busca))
+          setVisiveis(LOTE)
+        } catch (err) {
+          toast.error('Erro na busca', { description: msgErro(err) })
+        } finally {
+          setBuscando(false)
+        }
+      },
+      busca.trim() ? 350 : 0,
+    )
     return () => clearTimeout(t)
   }, [busca])
 
@@ -178,17 +181,32 @@ export default function MovimentarPage() {
             </Button>
           )}
         </div>
-        <div className="max-h-[70vh] overflow-auto divide-y divide-slate-100">
+        <div className="px-3 py-1.5 text-[11px] text-slate-500 border-b border-slate-100">
+          {buscando
+            ? 'Carregando...'
+            : busca.trim()
+              ? `${resultados.length} peça(s) encontrada(s)${resultados.length >= 40 ? ' (as 40 primeiras — refine a busca)' : ''}`
+              : `${resultados.length} peça(s) com estoque positivo`}
+        </div>
+        <div
+          className="max-h-[70vh] overflow-auto divide-y divide-slate-100"
+          onScroll={(e) => {
+            const el = e.currentTarget
+            if (el.scrollHeight - el.scrollTop - el.clientHeight < 300 && visiveis < resultados.length) {
+              setVisiveis((v) => Math.min(v + LOTE, resultados.length))
+            }
+          }}
+        >
           {buscando ? (
             <div className="py-8 flex justify-center">
               <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
             </div>
           ) : resultados.length === 0 ? (
             <p className="py-8 text-center text-sm text-slate-400">
-              {busca.trim() ? 'Nenhuma peça encontrada.' : 'Digite para buscar a peça.'}
+              {busca.trim() ? 'Nenhuma peça encontrada.' : 'Nenhuma peça com estoque positivo.'}
             </p>
           ) : (
-            resultados.map((p) => (
+            resultados.slice(0, visiveis).map((p) => (
               <button
                 key={p.id}
                 type="button"
@@ -205,6 +223,7 @@ export default function MovimentarPage() {
                 <div className="text-[11px] text-slate-500">
                   {[p.referencia && `Ref: ${p.referencia}`, p.marca].filter(Boolean).join(' · ')} · Estoque{' '}
                   {fmtQtd(p.estoque_geral)} · Showroom {fmtQtd(p.showroom)}
+                  {p.outros > 0 && ` · Outros setores ${fmtQtd(p.outros)}`}
                 </div>
               </button>
             ))
