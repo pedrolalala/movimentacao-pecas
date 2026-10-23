@@ -7,4 +7,6 @@ e de venda (reserva, entrega futura, separação), sem aprovação, registrando 
   `movimentacao_buscar_pecas`, `movimentacao_peca_setores`, `movimentacao_listar`, `movimentacao_usuarios`
   (migration 236). Acesso: sistema `movimentacao-pecas` liberado no Hub (ou admin).
 - Variáveis de build: `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` (arquivo `.env` local, fora do git).
-- Publicado em https://movimentacao-lucenera.pages.dev (Cloudflare Pages).
+- Publicado em https://movimentacao-lucenera.pages.dev (Cloudflare Pages, upload direto — o projeto ainda não está
+  ligado ao GitHub). Para publicar: `npx pnpm@10 run build` e `npx wrangler pages deploy dist --project-name
+  movimentacao-lucenera --branch main`. Detalhes do banco em `AI_DB_CONTEXT.md`.
