@@ -19,7 +19,11 @@ import {
 import { cn } from '@/lib/utils'
 import {
   ACOES_VENDA,
+  CAMPO_SETOR_VENDA,
+  DESTINOS_VENDA,
   SETORES_FISICOS,
+  SETORES_VENDA,
+  ehSetorVenda,
   buscarPecas,
   fmtQtd,
   getSetoresDaPeca,
@@ -31,6 +35,7 @@ import {
   type AcaoVenda,
   type Movimento,
   type PecaBusca,
+  type Setor,
   type SetorFisico,
   type SetoresDaPeca,
   type VendaDaPeca,
@@ -54,8 +59,10 @@ export default function MovimentarPage() {
   const [dados, setDados] = useState<SetoresDaPeca | null>(null)
   const [ultimos, setUltimos] = useState<Movimento[]>([])
 
-  const [origem, setOrigem] = useState<SetorFisico | ''>('')
-  const [destino, setDestino] = useState<SetorFisico | ''>('')
+  const [origem, setOrigem] = useState<Setor | ''>('')
+  const [destino, setDestino] = useState<Setor | ''>('')
+  // Origem de venda (Reserva / Entrega Futura / Separação): de qual L sai
+  const [lOrigem, setLOrigem] = useState('')
   const [quantidade, setQuantidade] = useState('')
   const [motivo, setMotivo] = useState('')
   const [salvando, setSalvando] = useState(false)
@@ -99,16 +106,48 @@ export default function MovimentarPage() {
     if (pecaId) void carregarPeca(pecaId)
   }, [pecaId, carregarPeca])
 
-  const saldoDe = (s: string) => dados?.setores.find((x) => x.setor === s)?.quantidade ?? 0
+  const saldoDe = (s: string) =>
+    ehSetorVenda(s)
+      ? (dados?.vendas ?? []).reduce((t, v) => t + v[CAMPO_SETOR_VENDA[s]], 0)
+      : (dados?.setores.find((x) => x.setor === s)?.quantidade ?? 0)
+  const origemVenda = !!origem && ehSetorVenda(origem)
+  const lsDaOrigem = origemVenda
+    ? (dados?.vendas ?? []).filter((v) => v[CAMPO_SETOR_VENDA[origem as keyof typeof CAMPO_SETOR_VENDA]] > 0)
+    : []
+  const lEscolhido = lsDaOrigem.find((v) => v.projeto_item_id === lOrigem) ?? null
+  const destinosPossiveis: Setor[] = !origem
+    ? []
+    : origemVenda
+      ? DESTINOS_VENDA[origem as keyof typeof DESTINOS_VENDA].map((d) => d.destino)
+      : SETORES_FISICOS.filter((s) => s !== origem)
+  const passoVenda = origemVenda
+    ? DESTINOS_VENDA[origem as keyof typeof DESTINOS_VENDA].find((d) => d.destino === destino)
+    : undefined
   const q = lerQtd(quantidade)
-  const limiteOrigem = origem ? (origem === 'Estoque Geral' ? Math.min(saldoDe(origem), dados?.livre_estoque_geral ?? 0) : saldoDe(origem)) : 0
+  const limiteOrigem = !origem
+    ? 0
+    : origemVenda
+      ? lEscolhido
+        ? lEscolhido[CAMPO_SETOR_VENDA[origem as keyof typeof CAMPO_SETOR_VENDA]]
+        : 0
+      : origem === 'Estoque Geral'
+        ? Math.min(saldoDe(origem), dados?.livre_estoque_geral ?? 0)
+        : saldoDe(origem)
   const showroomFracionado = (origem === 'Showroom' || destino === 'Showroom') && q !== Math.trunc(q)
   const podeMover =
-    !!pecaId && !!origem && !!destino && origem !== destino && q > 0 && q <= limiteOrigem + 0.0001 &&
+    !!pecaId && !!origem && !!destino && origem !== destino && destinosPossiveis.includes(destino) &&
+    (!origemVenda || (!!lEscolhido && !!passoVenda)) && q > 0 && q <= limiteOrigem + 0.0001 &&
     !showroomFracionado && !!motivo.trim() && !salvando
+
+  function escolherOrigem(o: Setor) {
+    setOrigem(o)
+    setLOrigem('')
+    setDestino(ehSetorVenda(o) ? DESTINOS_VENDA[o][0].destino : destino && destino !== o && !ehSetorVenda(destino) ? destino : '')
+  }
 
   function atalho(o: SetorFisico, d: SetorFisico) {
     setOrigem(o)
+    setLOrigem('')
     setDestino(d)
   }
 
@@ -116,9 +155,14 @@ export default function MovimentarPage() {
     if (!pecaId || !origem || !destino) return
     setSalvando(true)
     try {
-      const r = await moverSetor(pecaId, origem, destino, q, motivo.trim())
+      const r =
+        origemVenda && lEscolhido && passoVenda
+          ? await moverVenda(lEscolhido.projeto_item_id, passoVenda.acao, q, motivo.trim())
+          : await moverSetor(pecaId, origem as SetorFisico, destino as SetorFisico, q, motivo.trim())
       toast.success(`${numeroMov(r.numero)} registrado`, {
-        description: `${fmtQtd(q)} de ${origem} para ${destino}.`,
+        description: `${fmtQtd(q)} de ${origem} para ${destino}${
+          lEscolhido ? ` (${lEscolhido.venda_numero ?? lEscolhido.orcamento_numero} ${lEscolhido.l_fixo ?? ''})` : ''
+        }.`,
       })
       setQuantidade('')
       setMotivo('')
@@ -262,6 +306,16 @@ export default function MovimentarPage() {
                 </div>
               ))}
             </div>
+            {/* Setores de venda: soma dos L desta peça (o detalhe por venda está em "Vendas com esta peça") */}
+            <p className="mt-3 text-[11px] font-medium uppercase tracking-wide text-slate-500">Vendas</p>
+            <div className="mt-1 grid grid-cols-3 lg:grid-cols-6 gap-2">
+              {SETORES_VENDA.map((s) => (
+                <div key={s} className="rounded-lg border border-sky-200 bg-sky-50/50 px-3 py-2">
+                  <p className="text-[11px] text-slate-500">{s}</p>
+                  <p className="text-lg font-bold tabular-nums">{fmtQtd(saldoDe(s))}</p>
+                </div>
+              ))}
+            </div>
             <p className="mt-2 text-xs text-slate-500">
               Livre no Estoque Geral (sem reserva/separação de venda):{' '}
               <strong className={cn(dados.livre_estoque_geral <= 0 && 'text-red-600')}>
@@ -273,7 +327,7 @@ export default function MovimentarPage() {
           {/* Mover de setor */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-slate-800">Mover de setor</p>
+              <p className="text-sm font-semibold text-slate-800">Mover</p>
               <div className="flex gap-1">
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => atalho('Estoque Geral', 'Showroom')}>
                   Estoque → Showroom
@@ -286,12 +340,12 @@ export default function MovimentarPage() {
             <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr_120px] items-end">
               <div className="space-y-1">
                 <Label>De</Label>
-                <Select value={origem} onValueChange={(v) => setOrigem(v as SetorFisico)}>
+                <Select value={origem} onValueChange={(v) => escolherOrigem(v as Setor)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Setor de origem" />
                   </SelectTrigger>
                   <SelectContent>
-                    {SETORES_FISICOS.map((s) => (
+                    {[...SETORES_FISICOS, ...SETORES_VENDA].map((s) => (
                       <SelectItem key={s} value={s} disabled={saldoDe(s) <= 0}>
                         {s} ({fmtQtd(saldoDe(s))})
                       </SelectItem>
@@ -302,12 +356,12 @@ export default function MovimentarPage() {
               <ArrowRight className="hidden sm:block w-4 h-4 mb-3 text-slate-400" />
               <div className="space-y-1">
                 <Label>Para</Label>
-                <Select value={destino} onValueChange={(v) => setDestino(v as SetorFisico)}>
+                <Select value={destino} onValueChange={(v) => setDestino(v as Setor)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Setor de destino" />
                   </SelectTrigger>
                   <SelectContent>
-                    {SETORES_FISICOS.filter((s) => s !== origem).map((s) => (
+                    {destinosPossiveis.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
                       </SelectItem>
@@ -325,10 +379,30 @@ export default function MovimentarPage() {
                 />
               </div>
             </div>
-            {origem && (
+            {origemVenda && (
+              <div className="space-y-1">
+                <Label>Venda / L</Label>
+                <Select value={lOrigem} onValueChange={setLOrigem}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={`Escolha o L que está em ${origem}`} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {lsDaOrigem.map((v) => (
+                      <SelectItem key={v.projeto_item_id} value={v.projeto_item_id}>
+                        {v.venda_numero ?? v.orcamento_numero ?? '—'} · {v.cliente ?? '—'} · {v.l_fixo ?? '—'} (
+                        {fmtQtd(v[CAMPO_SETOR_VENDA[origem as keyof typeof CAMPO_SETOR_VENDA]])})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {passoVenda && <p className="text-[11px] text-slate-500">{passoVenda.ajuda}</p>}
+              </div>
+            )}
+            {origem && (!origemVenda || lEscolhido) && (
               <p className="text-[11px] text-slate-500">
                 Pode tirar até <strong>{fmtQtd(Math.max(limiteOrigem, 0))}</strong> de {origem}
-                {origem === 'Estoque Geral' && ' (o resto está guardado para vendas)'}.
+                {origem === 'Estoque Geral' && ' (o resto está guardado para vendas)'}
+                {origemVenda && lEscolhido && ` neste L`}.
                 {showroomFracionado && <span className="text-red-600"> No Showroom a quantidade é inteira.</span>}
               </p>
             )}

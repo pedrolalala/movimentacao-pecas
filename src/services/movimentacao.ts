@@ -12,6 +12,37 @@ export const SETORES_FISICOS = [
 ] as const
 export type SetorFisico = (typeof SETORES_FISICOS)[number]
 
+// Setores de venda: o saldo é de um L (item da venda), então mover deles pede o L.
+export const SETORES_VENDA = ['Reserva', 'Entrega Futura', 'Separação'] as const
+export type SetorVenda = (typeof SETORES_VENDA)[number]
+export type Setor = SetorFisico | SetorVenda
+export const ehSetorVenda = (s: string): s is SetorVenda => (SETORES_VENDA as readonly string[]).includes(s)
+export const CAMPO_SETOR_VENDA: Record<SetorVenda, 'q_reserva' | 'q_entrega_futura' | 'q_separacao'> = {
+  Reserva: 'q_reserva',
+  'Entrega Futura': 'q_entrega_futura',
+  Separação: 'q_separacao',
+}
+/** De um setor de venda, para onde pode ir e qual ação do banco faz isso. */
+export const DESTINOS_VENDA: Record<SetorVenda, { destino: SetorVenda; acao: AcaoVenda; ajuda: string }[]> = {
+  Reserva: [
+    {
+      destino: 'Entrega Futura',
+      acao: 'reserva_para_entrega_futura',
+      ajuda: 'A peça física volta livre para o Estoque Geral e a necessidade de compra deste L volta.',
+    },
+  ],
+  'Entrega Futura': [
+    { destino: 'Reserva', acao: 'entrega_futura_para_reserva', ajuda: 'Usa uma peça livre do Estoque Geral.' },
+  ],
+  Separação: [
+    {
+      destino: 'Reserva',
+      acao: 'separacao_para_reserva',
+      ajuda: 'Estorna a separação (peça já separada: só admin ou gerente). Entregue não volta por aqui.',
+    },
+  ],
+}
+
 export type AcaoVenda = 'reserva_para_entrega_futura' | 'entrega_futura_para_reserva' | 'separacao_para_reserva'
 
 export const ACOES_VENDA: { acao: AcaoVenda; rotulo: string; campo: 'q_reserva' | 'q_entrega_futura' | 'q_separacao'; ajuda: string }[] = [
