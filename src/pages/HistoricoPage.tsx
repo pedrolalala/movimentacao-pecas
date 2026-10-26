@@ -20,7 +20,7 @@ import {
 // SPEC-224: histórico de todas as movimentações — quem, quando, peça, quantidade, de onde, para onde e motivo.
 
 const TODOS = '__todos__'
-const SETORES_FILTRO = [...SETORES_FISICOS, 'Reserva', 'Entrega Futura', 'Separação']
+const SETORES_FILTRO = [...SETORES_FISICOS, 'Reserva', 'Entrega Futura', 'Separação', 'Baixa (peça faltando)']
 
 const dataHora = (v: string) =>
   new Date(v).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })

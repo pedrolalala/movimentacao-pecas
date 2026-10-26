@@ -183,12 +183,15 @@ export async function moverVenda(
   acao: AcaoVenda,
   quantidade: number,
   motivo: string,
+  baixarEstoque = false,
 ): Promise<{ numero: number }> {
   const { data, error } = await (supabase as any).rpc('movimentar_peca_venda', {
     p_projeto_item_id: projetoItemId,
     p_acao: acao,
     p_quantidade: quantidade,
     p_motivo: motivo,
+    // SPEC-227: peça faltando — baixa também do Estoque Geral (só Reserva → Entrega Futura)
+    ...(baixarEstoque ? { p_baixar_estoque: true } : {}),
   })
   if (error) throw error
   return { numero: Number(data?.numero) }

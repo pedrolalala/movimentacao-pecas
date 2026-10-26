@@ -5,6 +5,7 @@ import { ArrowRight, Loader2, Search, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -65,12 +66,15 @@ export default function MovimentarPage() {
   const [lOrigem, setLOrigem] = useState('')
   const [quantidade, setQuantidade] = useState('')
   const [motivo, setMotivo] = useState('')
+  // SPEC-227: Reserva → Entrega Futura de peça que não existe: baixa também do Estoque Geral
+  const [baixar, setBaixar] = useState(false)
   const [salvando, setSalvando] = useState(false)
 
   const [vendaSel, setVendaSel] = useState<VendaDaPeca | null>(null)
   const [acao, setAcao] = useState<AcaoVenda>('reserva_para_entrega_futura')
   const [qtdVenda, setQtdVenda] = useState('')
   const [motivoVenda, setMotivoVenda] = useState('')
+  const [baixarVenda, setBaixarVenda] = useState(false)
 
   useEffect(() => {
     const t = setTimeout(
@@ -142,6 +146,7 @@ export default function MovimentarPage() {
   function escolherOrigem(o: Setor) {
     setOrigem(o)
     setLOrigem('')
+    setBaixar(false)
     setDestino(ehSetorVenda(o) ? DESTINOS_VENDA[o][0].destino : destino && destino !== o && !ehSetorVenda(destino) ? destino : '')
   }
 
@@ -157,15 +162,17 @@ export default function MovimentarPage() {
     try {
       const r =
         origemVenda && lEscolhido && passoVenda
-          ? await moverVenda(lEscolhido.projeto_item_id, passoVenda.acao, q, motivo.trim())
+          ? await moverVenda(lEscolhido.projeto_item_id, passoVenda.acao, q, motivo.trim(),
+              baixar && passoVenda.acao === 'reserva_para_entrega_futura')
           : await moverSetor(pecaId, origem as SetorFisico, destino as SetorFisico, q, motivo.trim())
       toast.success(`${numeroMov(r.numero)} registrado`, {
         description: `${fmtQtd(q)} de ${origem} para ${destino}${
           lEscolhido ? ` (${lEscolhido.venda_numero ?? lEscolhido.orcamento_numero} ${lEscolhido.l_fixo ?? ''})` : ''
-        }.`,
+        }${baixar && passoVenda?.acao === 'reserva_para_entrega_futura' ? ' Baixado também do Estoque Geral.' : ''}`,
       })
       setQuantidade('')
       setMotivo('')
+      setBaixar(false)
       await carregarPeca(pecaId)
     } catch (err) {
       toast.error('Não foi possível mover', { description: msgErro(err) })
@@ -185,15 +192,19 @@ export default function MovimentarPage() {
     setAcao(primeira?.acao ?? 'reserva_para_entrega_futura')
     setQtdVenda('')
     setMotivoVenda('')
+    setBaixarVenda(false)
   }
 
   async function moverNaVenda() {
     if (!vendaSel || !pecaId) return
     setSalvando(true)
     try {
-      const r = await moverVenda(vendaSel.projeto_item_id, acao, qv, motivoVenda.trim())
+      const baixa = baixarVenda && acao === 'reserva_para_entrega_futura'
+      const r = await moverVenda(vendaSel.projeto_item_id, acao, qv, motivoVenda.trim(), baixa)
       toast.success(`${numeroMov(r.numero)} registrado`, {
-        description: `${fmtQtd(qv)} · ${acaoInfo.rotulo} (${vendaSel.venda_numero ?? vendaSel.orcamento_numero} ${vendaSel.l_fixo ?? ''})`,
+        description: `${fmtQtd(qv)} · ${acaoInfo.rotulo} (${vendaSel.venda_numero ?? vendaSel.orcamento_numero} ${vendaSel.l_fixo ?? ''})${
+          baixa ? ' · baixado também do Estoque Geral' : ''
+        }`,
       })
       setVendaSel(null)
       await carregarPeca(pecaId)
@@ -398,6 +409,15 @@ export default function MovimentarPage() {
                 {passoVenda && <p className="text-[11px] text-slate-500">{passoVenda.ajuda}</p>}
               </div>
             )}
+            {passoVenda?.acao === 'reserva_para_entrega_futura' && (
+              <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 cursor-pointer">
+                <Checkbox className="mt-0.5" checked={baixar} onCheckedChange={(v) => setBaixar(v === true)} />
+                <span>
+                  <strong>A peça não existe fisicamente</strong> — baixar também do Estoque Geral (ex.: reserva 10, na separação
+                  só tinha 9). Sem marcar, a peça fica livre no Estoque Geral.
+                </span>
+              </label>
+            )}
             {origem && (!origemVenda || lEscolhido) && (
               <p className="text-[11px] text-slate-500">
                 Pode tirar até <strong>{fmtQtd(Math.max(limiteOrigem, 0))}</strong> de {origem}
@@ -522,6 +542,15 @@ export default function MovimentarPage() {
               </Select>
               <p className="text-[11px] text-slate-500">{acaoInfo.ajuda}</p>
             </div>
+            {acao === 'reserva_para_entrega_futura' && (
+              <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 cursor-pointer">
+                <Checkbox className="mt-0.5" checked={baixarVenda} onCheckedChange={(v) => setBaixarVenda(v === true)} />
+                <span>
+                  <strong>A peça não existe fisicamente</strong> — baixar também do Estoque Geral (ex.: reserva 10, na separação
+                  só tinha 9). Sem marcar, a peça fica livre no Estoque Geral.
+                </span>
+              </label>
+            )}
             <div className="space-y-1">
               <Label>Quantidade (até {fmtQtd(limiteVenda)})</Label>
               <Input
