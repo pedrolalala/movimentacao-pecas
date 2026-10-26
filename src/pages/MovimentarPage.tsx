@@ -118,15 +118,38 @@ export default function MovimentarPage() {
   const lsDaOrigem = origemVenda
     ? (dados?.vendas ?? []).filter((v) => v[CAMPO_SETOR_VENDA[origem as keyof typeof CAMPO_SETOR_VENDA]] > 0)
     : []
-  const lEscolhido = lsDaOrigem.find((v) => v.projeto_item_id === lOrigem) ?? null
+  // SPEC-227: do Estoque Geral para um L. "Reserva" = peça livre cobre a entrega futura do L;
+  // "Entrega Futura" = peça que não existe: o L volta a entrega futura e o Estoque Geral baixa.
+  const geralParaVenda = origem === 'Estoque Geral' && (destino === 'Reserva' || destino === 'Entrega Futura')
+  const campoDoL = destino === 'Reserva' ? 'q_entrega_futura' : 'q_reserva'
+  const lsDoGeral = geralParaVenda ? (dados?.vendas ?? []).filter((v) => v[campoDoL] > 0) : []
+  const lsParaEscolher = origemVenda ? lsDaOrigem : lsDoGeral
+  const lEscolhido = lsParaEscolher.find((v) => v.projeto_item_id === lOrigem) ?? null
   const destinosPossiveis: Setor[] = !origem
     ? []
     : origemVenda
       ? DESTINOS_VENDA[origem as keyof typeof DESTINOS_VENDA].map((d) => d.destino)
-      : SETORES_FISICOS.filter((s) => s !== origem)
+      : origem === 'Estoque Geral'
+        ? [...SETORES_FISICOS.filter((s) => s !== origem), 'Reserva', 'Entrega Futura']
+        : SETORES_FISICOS.filter((s) => s !== origem)
   const passoVenda = origemVenda
     ? DESTINOS_VENDA[origem as keyof typeof DESTINOS_VENDA].find((d) => d.destino === destino)
-    : undefined
+    : geralParaVenda
+      ? destino === 'Reserva'
+        ? {
+            destino: 'Reserva' as const,
+            acao: 'entrega_futura_para_reserva' as AcaoVenda,
+            ajuda: 'A peça livre do Estoque Geral fica guardada para este L (sai da entrega futura dele).',
+          }
+        : {
+            destino: 'Entrega Futura' as const,
+            acao: 'reserva_para_entrega_futura' as AcaoVenda,
+            ajuda:
+              'Peça que não existe fisicamente: sai do Estoque Geral e o L volta para entrega futura (precisa comprar).',
+          }
+      : undefined
+  // Do Estoque Geral → Entrega Futura a baixa é sempre feita; de Reserva → Entrega Futura é a caixa
+  const baixaEfetiva = passoVenda?.acao === 'reserva_para_entrega_futura' && (geralParaVenda || baixar)
   const q = lerQtd(quantidade)
   const limiteOrigem = !origem
     ? 0
@@ -134,13 +157,19 @@ export default function MovimentarPage() {
       ? lEscolhido
         ? lEscolhido[CAMPO_SETOR_VENDA[origem as keyof typeof CAMPO_SETOR_VENDA]]
         : 0
+      : geralParaVenda
+        ? lEscolhido
+          ? destino === 'Reserva'
+            ? Math.min(lEscolhido.q_entrega_futura, dados?.livre_estoque_geral ?? 0)
+            : Math.min(lEscolhido.q_reserva, saldoDe('Estoque Geral'))
+          : 0
       : origem === 'Estoque Geral'
         ? Math.min(saldoDe(origem), dados?.livre_estoque_geral ?? 0)
         : saldoDe(origem)
   const showroomFracionado = (origem === 'Showroom' || destino === 'Showroom') && q !== Math.trunc(q)
   const podeMover =
     !!pecaId && !!origem && !!destino && origem !== destino && destinosPossiveis.includes(destino) &&
-    (!origemVenda || (!!lEscolhido && !!passoVenda)) && q > 0 && q <= limiteOrigem + 0.0001 &&
+    (!(origemVenda || geralParaVenda) || (!!lEscolhido && !!passoVenda)) && q > 0 && q <= limiteOrigem + 0.0001 &&
     !showroomFracionado && !!motivo.trim() && !salvando
 
   function escolherOrigem(o: Setor) {
@@ -161,14 +190,13 @@ export default function MovimentarPage() {
     setSalvando(true)
     try {
       const r =
-        origemVenda && lEscolhido && passoVenda
-          ? await moverVenda(lEscolhido.projeto_item_id, passoVenda.acao, q, motivo.trim(),
-              baixar && passoVenda.acao === 'reserva_para_entrega_futura')
+        (origemVenda || geralParaVenda) && lEscolhido && passoVenda
+          ? await moverVenda(lEscolhido.projeto_item_id, passoVenda.acao, q, motivo.trim(), baixaEfetiva)
           : await moverSetor(pecaId, origem as SetorFisico, destino as SetorFisico, q, motivo.trim())
       toast.success(`${numeroMov(r.numero)} registrado`, {
         description: `${fmtQtd(q)} de ${origem} para ${destino}${
           lEscolhido ? ` (${lEscolhido.venda_numero ?? lEscolhido.orcamento_numero} ${lEscolhido.l_fixo ?? ''})` : ''
-        }${baixar && passoVenda?.acao === 'reserva_para_entrega_futura' ? ' Baixado também do Estoque Geral.' : ''}`,
+        }${baixaEfetiva ? ' Baixado também do Estoque Geral.' : ''}`,
       })
       setQuantidade('')
       setMotivo('')
@@ -367,7 +395,10 @@ export default function MovimentarPage() {
               <ArrowRight className="hidden sm:block w-4 h-4 mb-3 text-slate-400" />
               <div className="space-y-1">
                 <Label>Para</Label>
-                <Select value={destino} onValueChange={(v) => setDestino(v as Setor)}>
+                <Select value={destino} onValueChange={(v) => {
+                    setDestino(v as Setor)
+                    if (!origemVenda) setLOrigem('')
+                  }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Setor de destino" />
                   </SelectTrigger>
@@ -390,26 +421,42 @@ export default function MovimentarPage() {
                 />
               </div>
             </div>
-            {origemVenda && (
+            {(origemVenda || geralParaVenda) && (
               <div className="space-y-1">
                 <Label>Venda / L</Label>
                 <Select value={lOrigem} onValueChange={setLOrigem}>
                   <SelectTrigger>
-                    <SelectValue placeholder={`Escolha o L que está em ${origem}`} />
+                    <SelectValue
+                      placeholder={
+                        origemVenda
+                          ? `Escolha o L que está em ${origem}`
+                          : destino === 'Reserva'
+                            ? 'Escolha o L que está em Entrega Futura'
+                            : 'Escolha o L que está em Reserva'
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    {lsDaOrigem.map((v) => (
+                    {lsParaEscolher.map((v) => (
                       <SelectItem key={v.projeto_item_id} value={v.projeto_item_id}>
                         {v.venda_numero ?? v.orcamento_numero ?? '—'} · {v.cliente ?? '—'} · {v.l_fixo ?? '—'} (
-                        {fmtQtd(v[CAMPO_SETOR_VENDA[origem as keyof typeof CAMPO_SETOR_VENDA]])})
+                        {origemVenda
+                          ? fmtQtd(v[CAMPO_SETOR_VENDA[origem as keyof typeof CAMPO_SETOR_VENDA]])
+                          : `${destino === 'Reserva' ? 'entrega futura' : 'reserva'} ${fmtQtd(v[campoDoL])}`}
+                        )
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {geralParaVenda && lsDoGeral.length === 0 && (
+                  <p className="text-[11px] text-red-600">
+                    Nenhuma venda desta peça tem {destino === 'Reserva' ? 'entrega futura' : 'reserva'}.
+                  </p>
+                )}
                 {passoVenda && <p className="text-[11px] text-slate-500">{passoVenda.ajuda}</p>}
               </div>
             )}
-            {passoVenda?.acao === 'reserva_para_entrega_futura' && (
+            {origemVenda && passoVenda?.acao === 'reserva_para_entrega_futura' && (
               <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 cursor-pointer">
                 <Checkbox className="mt-0.5" checked={baixar} onCheckedChange={(v) => setBaixar(v === true)} />
                 <span>
@@ -418,11 +465,11 @@ export default function MovimentarPage() {
                 </span>
               </label>
             )}
-            {origem && (!origemVenda || lEscolhido) && (
+            {origem && (!(origemVenda || geralParaVenda) || lEscolhido) && (
               <p className="text-[11px] text-slate-500">
                 Pode tirar até <strong>{fmtQtd(Math.max(limiteOrigem, 0))}</strong> de {origem}
-                {origem === 'Estoque Geral' && ' (o resto está guardado para vendas)'}
-                {origemVenda && lEscolhido && ` neste L`}.
+                {origem === 'Estoque Geral' && !geralParaVenda && ' (o resto está guardado para vendas)'}
+                {(origemVenda || geralParaVenda) && lEscolhido && ` para este L`}.
                 {showroomFracionado && <span className="text-red-600"> No Showroom a quantidade é inteira.</span>}
               </p>
             )}
