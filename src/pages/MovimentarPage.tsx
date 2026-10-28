@@ -110,6 +110,15 @@ export default function MovimentarPage() {
     if (pecaId) void carregarPeca(pecaId)
   }, [pecaId, carregarPeca])
 
+  // SPEC-235 G: depois de mover, a lista da esquerda (Geral / Showroom de cada peça) também precisa atualizar
+  const atualizarLista = useCallback(async () => {
+    try {
+      setResultados(await buscarPecas(busca))
+    } catch {
+      // a lista volta a atualizar na próxima busca
+    }
+  }, [busca])
+
   const saldoDe = (s: string) =>
     ehSetorVenda(s)
       ? (dados?.vendas ?? []).reduce((t, v) => t + v[CAMPO_SETOR_VENDA[s]], 0)
@@ -201,7 +210,7 @@ export default function MovimentarPage() {
       setQuantidade('')
       setMotivo('')
       setBaixar(false)
-      await carregarPeca(pecaId)
+      await Promise.all([carregarPeca(pecaId), atualizarLista()])
     } catch (err) {
       toast.error('Não foi possível mover', { description: msgErro(err) })
     } finally {
@@ -235,7 +244,7 @@ export default function MovimentarPage() {
         }`,
       })
       setVendaSel(null)
-      await carregarPeca(pecaId)
+      await Promise.all([carregarPeca(pecaId), atualizarLista()])
     } catch (err) {
       toast.error('Não foi possível mover', { description: msgErro(err) })
     } finally {
